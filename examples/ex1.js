@@ -9,10 +9,15 @@ const ListItem = Reenact.createClass({
 })
 
 const Component = Reenact.createClass({
+  getInitialState() {
+    setInterval(() => this.setState({ list: this.state.list.slice(1).concat([this.state.next]), next: this.state.next+1 }),1000)
+    return { list: [1,2,3], next: 4 }
+  },
+
   render() {
     return <div>
       Hello {this.props.whoShouldIWelcome}!
-      {[1,2,3,4,5].map((key) => <ListItem key={key} />)}
+      {this.state.list.map((key) => <ListItem key={key} />)}
     </div>
   }
 })

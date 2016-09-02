@@ -1,8 +1,20 @@
 const Reenact = {}
 const ReenactDOM = {}
 
+const ComponentPrototype = {}
+
+ComponentPrototype.setState = function(newState) {
+  if(this.state === null) throw new Error('Component keeps track of no state')
+  // TODO: don't immediately set state and rerender - wait for events to be done like React does
+  this.state = Object.assign(this.state, newState)
+  this.__treeKeeper.deepDeclareElement(this.__element, this.__vdomPath)
+}
+
 Reenact.createClass = (prototype) => {
-  return prototype
+  return Object.assign(
+    Object.create(ComponentPrototype),
+    prototype
+  )
 }
 
 Reenact.createElement = (component, props, ...children) => {
@@ -26,7 +38,7 @@ const CreateTreeKeeper = (rootDOMNode) => {
 
 const TreeKeeperPrototype = {}
 
-TreeKeeperPrototype.shallowAddAndInstantiate = function(element, vdomPath) {
+TreeKeeperPrototype.shallowDeclareElement = function(element, vdomPath) {
   let instance = null
   let childrenWithPaths = null
   let vdomNode = null
@@ -37,6 +49,7 @@ TreeKeeperPrototype.shallowAddAndInstantiate = function(element, vdomPath) {
       isTextNode: true,
       tag: element,   // TODO: don't reuse this field for text
       instance: null,
+      element: element,
       isDirectlyRenderable: true,
       renderedNode: null,
       childVDOMPaths: [],
@@ -49,32 +62,49 @@ TreeKeeperPrototype.shallowAddAndInstantiate = function(element, vdomPath) {
       isTextNode: false,
       tag: element.component,
       instance: null,
+      element: element,
       isDirectlyRenderable: true,
       renderedNode: null,
       childVDOMPaths: childrenWithPaths.map(({ vdomPath }) => vdomPath),
     }
   } else if (Array.prototype.isPrototypeOf(element)) {
     childrenWithPaths = element
-      .map((child,i) => ({ element: child, vdomPath: vdomPath + '-' + i }))
+      .map((child,i) => ({ element: child, vdomPath: vdomPath + '-' + (child.props.key !== undefined ? child.props.key : i) }))
     vdomNode = {
       path: vdomPath,
       isTextNode: false,
       tag: null,
-      instance: instance,
+      instance: null,
+      element: element,
       isDirectlyRenderable: false,
       renderedNode: null,
       childVDOMPaths: childrenWithPaths.map(({ vdomPath }) => vdomPath)
     }
   } else if (typeof element.component === 'object') {
-    instance = Object.assign(
-      Object.create(element.component),
-      { props: element.props, children: element.children }
-    )
-    if(instance.getInitialState) {
-      const state = instance.getInitialState(element.props)
-      instance.state = state
+    let instance = this.prevVDOMTree[vdomPath]
+        ? this.prevVDOMTree[vdomPath].instance : undefined
+
+    if(instance) {
+      instance.props = element.props
+      instance.children = element.children
+    } else {
+      instance = Object.assign(
+        Object.create(element.component),
+        {
+          props: element.props,
+          children: element.children,
+          __treeKeeper: this,
+          __vdomPath: vdomPath,
+          __element: element,
+        }
+      )
+      if(instance.getInitialState) {
+        const state = instance.getInitialState(element.props)
+        instance.state = state
+      }
+      // TODO: bind the methods
     }
-    // TODO: bind the methods
+
     childrenWithPaths =
       [{ element: instance.render(), vdomPath: vdomPath + '-representative' }]
     vdomNode = {
@@ -82,29 +112,53 @@ TreeKeeperPrototype.shallowAddAndInstantiate = function(element, vdomPath) {
       isTextNode: false,
       tag: element.component,
       instance: instance,
+      element: element,
       isDirectlyRenderable: false,
       renderedNode: null,
-      childVDOMPaths: childrenWithPaths.map(({ vdomPath }) => vdomPath)
+      childVDOMPaths: childrenWithPaths.map(({ vdomPath }) => vdomPath),
     }
   } else if (typeof element.component === 'function') {
     // TODO: functional components
+    throw new Error('Unimplemented')
   } else {
     throw new Error('Unsupported pseudoElement - currently only primitives arrays and Reenact.createElement() produced objects are supported ')
   }
 
+  let childPathsToRemove = []
+  const prevVDOMNode = this.prevVDOMTree[vdomPath]
+  if(prevVDOMNode) {
+    // TODO: performance
+    prevVDOMNode.childVDOMPaths.forEach(prevVDOMPath => {
+      if(childrenWithPaths.find(({ element, vdomPath }) => vdomPath === prevVDOMPath) === undefined) {
+        this.removeVDOMNode(prevVDOMPath)
+      }
+    })
+  }
+
   this.nextVDOMTree[vdomPath] = vdomNode
-  if(childrenWithPaths === null) debugger
   return childrenWithPaths
 }
 
-TreeKeeperPrototype.deepAddAndInstantiate = function(element, vdomPath='root') {
+// TODO: flatten the recursion in this call and then remove this method out of shallowDeclareElement
+TreeKeeperPrototype.removeVDOMNode = function(vdomPath) {
+  const prevVDOMNode = this.prevVDOMTree[vdomPath]
+  delete this.nextVDOMTree[vdomPath]
+
+  prevVDOMNode.childVDOMPaths.forEach(childVDOMPath => {
+    this.removeVDOMNode(childVDOMPath)
+  })
+}
+
+TreeKeeperPrototype.deepDeclareElement = function(element, vdomPath='root') {
   const elementsToAdd = [{ element, vdomPath }]
 
   while(elementsToAdd.length > 0) {
     const { element, vdomPath } = elementsToAdd.pop()
-    const childrenWithPaths = this.shallowAddAndInstantiate(element, vdomPath)
+    const childrenWithPaths = this.shallowDeclareElement(element, vdomPath)
     elementsToAdd.splice(elementsToAdd.length, 0, ...childrenWithPaths)
   }
+
+  this.flushVDOMToDOM()
 }
 
 const getParentPath = (vdomPath) => {
@@ -112,40 +166,83 @@ const getParentPath = (vdomPath) => {
   return vdomPath.split('-').slice(0,-1).join('-')
 }
 
-TreeKeeperPrototype.flushVNodeToNode = function(vdomPath) {
-  const nextVDOMNode = this.nextVDOMTree[vdomPath]
-
-  // TODO: Actually do the diff
-  const prevVDOMNode = this.prevVDOMTree[vdomPath]
-
-  if(!nextVDOMNode.isDirectlyRenderable) return nextVDOMNode
-
+TreeKeeperPrototype.findRenderableParent = function(vdomTree, vdomPath) {
   let renderableParentVDOMPath = getParentPath(vdomPath)
-  while(renderableParentVDOMPath !== '' && !this.nextVDOMTree[renderableParentVDOMPath].isDirectlyRenderable) {
+  while(renderableParentVDOMPath !== '' && !vdomTree[renderableParentVDOMPath].isDirectlyRenderable) {
     renderableParentVDOMPath = getParentPath(renderableParentVDOMPath)
   }
 
-  const renderableParentVDOM = this.nextVDOMTree[renderableParentVDOMPath]
+  return vdomTree[renderableParentVDOMPath]
+}
+
+TreeKeeperPrototype.flushVNodeToNode = function(vdomPath) {
+  const nextVDOMNode = this.nextVDOMTree[vdomPath]
+  const prevVDOMNode = this.prevVDOMTree[vdomPath]
+
+  if(prevVDOMNode && prevVDOMNode.isDirectlyRenderable && !nextVDOMNode) {
+    const renderableParentVDOM = this.findRenderableParent(this.prevVDOMTree, vdomPath)
+    const parentRenderedNode = renderableParentVDOM.renderedNode || this.rootDOMNode
+    parentRenderedNode.removeChild(prevVDOMNode.renderedNode)
+  }
+
+  if(prevVDOMNode && !nextVDOMNode) return nextVDOMNode
+
+  // TODO: There is an issue with renderable nodes changed to non-renderable not being removed
+  if(!nextVDOMNode.isDirectlyRenderable) return nextVDOMNode
+
+  const renderableParentVDOM = this.findRenderableParent(this.nextVDOMTree, vdomPath)
+
   let parentRenderedNode = null
   if(renderableParentVDOM && !renderableParentVDOM.renderedNode) {
     throw new Error('VDOM changes should be flushed in the BFS order - a node is missing')
   } else if(renderableParentVDOM) {
-    parentRenderedNode = this.nextVDOMTree[renderableParentVDOMPath].renderedNode
-  } else if(renderableParentVDOMPath == '') {
+    parentRenderedNode = renderableParentVDOM.renderedNode
+  } else if(renderableParentVDOM === undefined) {
     parentRenderedNode = this.rootDOMNode
   } else {
     throw new Error('No DOM node was rendered for ' + renderableParentVDOMPath)
   }
 
-  let renderedNode
-  if(nextVDOMNode.isTextNode) {
-    renderedNode = document.createTextNode(nextVDOMNode.tag)
+  let oldRenderedNode
+  let newRenderedNode
+  let replaceNode = false
+  if(prevVDOMNode !== undefined) {
+    oldRenderedNode = prevVDOMNode.renderedNode
+    if(nextVDOMNode.isTextNode) {
+      replaceNode = false
+      oldRenderedNode.textContent = nextVDOMNode.tag
+    } else {
+      const canPrevRenderedNodeBeReused = prevVDOMNode.tag === nextVDOMNode.tag
+      if(canPrevRenderedNodeBeReused) {
+        replaceNode = false
+      } else {
+        replaceNode = true
+        newRenderedNode = document.createElement(nextVDOMNode.tag)
+      }
+    }
   } else {
-    renderedNode = document.createElement(nextVDOMNode.tag)
+    replaceNode = false
+    if(nextVDOMNode.isTextNode) {
+      newRenderedNode = document.createTextNode(nextVDOMNode.tag)
+    } else {
+      newRenderedNode = document.createElement(nextVDOMNode.tag)
+    }
   }
-  parentRenderedNode.appendChild(renderedNode)
 
-  return { ...nextVDOMNode, renderedNode }
+  if(replaceNode) {
+    parentRenderedNode.replaceChild(newRenderedNode, oldRenderedNode)
+  } else if(oldRenderedNode && newRenderedNode) {
+    parentRenderedNode.removeChild(oldRenderedNode)
+    parentRenderedNode.appendChild(newRenderedNode)
+  } else if(newRenderedNode) {
+    parentRenderedNode.appendChild(newRenderedNode)
+  }
+
+  if(newRenderedNode !== undefined) {
+    return { ...nextVDOMNode, renderedNode: newRenderedNode }
+  } else {
+    return { ...nextVDOMNode, renderedNode: oldRenderedNode }
+  }
 }
 
 TreeKeeperPrototype.flushVDOMToDOM = function() {
@@ -153,23 +250,33 @@ TreeKeeperPrototype.flushVDOMToDOM = function() {
   while(vdomPaths.length > 0) {
     const vdomPath = vdomPaths.pop()
     const updatedVNode = this.flushVNodeToNode(vdomPath)
-    this.nextVDOMTree[vdomPath] = updatedVNode
+    if(this.nextVDOMTree[vdomPath]) {
+      this.nextVDOMTree[vdomPath] = updatedVNode
+    }
 
-    vdomPaths.unshift(...updatedVNode.childVDOMPaths.slice().reverse())
+    const prevChildVDOMPaths = this.prevVDOMTree[vdomPath]
+      ? this.prevVDOMTree[vdomPath].childVDOMPaths : []
+    const nextChildVDOMPaths = this.nextVDOMTree[vdomPath]
+      ? this.nextVDOMTree[vdomPath].childVDOMPaths : []
+
+    // TODO: improve the performance of the follwing
+    const allVDomPaths = nextChildVDOMPaths.slice().reverse()
+    prevChildVDOMPaths.forEach(vdomPath => {
+      if(allVDomPaths.indexOf(vdomPath) === -1) {
+        allVDomPaths.push(vdomPath)
+      }
+    })
+
+    vdomPaths.unshift(...allVDomPaths)
   }
 
   this.prevVDOMTree = this.nextVDOMTree
   this.nextVDOMTree = Object.assign({}, this.prevVDOMTree)
 }
 
-const buildVirtualDOMTreeFromElements = (rootElement) => {
-  const vdomParentNode = {}
-}
-
 ReenactDOM.render = (rootDOMNode, rootElement) => {
   const treeKeeper = CreateTreeKeeper(rootDOMNode)
-  treeKeeper.deepAddAndInstantiate(rootElement)
-  treeKeeper.flushVDOMToDOM()
+  treeKeeper.deepDeclareElement(rootElement)
 }
 
 export {
