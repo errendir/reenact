@@ -11,10 +11,11 @@ export const CreateTreeKeeper = (rootDOMNode) => {
 
 const TreeKeeperPrototype = {}
 
-const primitiveNodeAndChildren = (element, vdomPath) => {
+const primitiveNodeAndChildren = (element, vdomPath, vdomParentPath) => {
   const childrenWithPaths = []
   const vdomNode = {
-    path: vdomPath,
+    vdomPath,
+    vdomParentPath,
     isTextNode: true,
     tag: element,   // TODO: don't reuse this field for text
     instance: null,
@@ -26,11 +27,12 @@ const primitiveNodeAndChildren = (element, vdomPath) => {
   return { childrenWithPaths, vdomNode }
 }
 
-const stringNodeAndChildren = (element, vdomPath) => {
+const stringNodeAndChildren = (element, vdomPath, vdomParentPath) => {
   const childrenWithPaths = element.children
     .map((child,i) => ({ element: child, vdomPath: vdomPath + '-' + i }))
   const vdomNode = {
-    path: vdomPath,
+    vdomPath,
+    vdomParentPath,
     isTextNode: false,
     tag: element.component,
     instance: null,
@@ -42,11 +44,12 @@ const stringNodeAndChildren = (element, vdomPath) => {
   return { childrenWithPaths, vdomNode }
 }
 
-const arrayNodeAndChildren = (element, vdomPath) => {
+const arrayNodeAndChildren = (element, vdomPath, vdomParentPath) => {
   const childrenWithPaths = element
     .map((child,i) => ({ element: child, vdomPath: vdomPath + '-' + (child.props.key !== undefined ? child.props.key : i) }))
   const vdomNode = {
-    path: vdomPath,
+    vdomPath,
+    vdomParentPath,
     isTextNode: false,
     tag: null,
     instance: null,
@@ -58,7 +61,7 @@ const arrayNodeAndChildren = (element, vdomPath) => {
   return { childrenWithPaths, vdomNode }
 }
 
-const componentNodeAndChildren = (element, vdomPath, treeKeeper) => {
+const componentNodeAndChildren = (element, vdomPath, vdomParentPath, treeKeeper) => {
   let instance = treeKeeper.prevVDOMTree[vdomPath]
       ? treeKeeper.prevVDOMTree[vdomPath].instance : undefined
 
@@ -73,6 +76,7 @@ const componentNodeAndChildren = (element, vdomPath, treeKeeper) => {
         children: element.children,
         __treeKeeper: treeKeeper,
         __vdomPath: vdomPath,
+        __vdomParentPath: vdomParentPath,
         __element: element,
       }
     )
@@ -86,7 +90,8 @@ const componentNodeAndChildren = (element, vdomPath, treeKeeper) => {
   const childrenWithPaths =
     [{ element: instance.render(), vdomPath: vdomPath + '-representative' }]
   const vdomNode = {
-    path: vdomPath,
+    vdomPath,
+    vdomParentPath,
     isTextNode: false,
     tag: element.component,
     instance: instance,
@@ -99,25 +104,29 @@ const componentNodeAndChildren = (element, vdomPath, treeKeeper) => {
   return { childrenWithPaths, vdomNode }
 }
 
-TreeKeeperPrototype.shallowDeclareElement = function(vdomPath, elementsToDeclareByPath) {
+TreeKeeperPrototype.shallowDeclareElement = function(vdomPath, elementsToDeclareByPath, parentPathsByPath) {
+  const vdomParentPath = parentPathsByPath[vdomPath]
   const nextElement = elementsToDeclareByPath[vdomPath]
   const prevVDOMNode = this.prevVDOMTree[vdomPath]
 
   if(prevVDOMNode && !nextElement) {
     this.removeVDOMNode(vdomPath)
-    prevVDOMNode.childVDOMPaths.forEach(vdomPath => elementsToDeclareByPath[vdomPath] = false)
+    prevVDOMNode.childVDOMPaths.forEach(childVDOMPath => {
+      elementsToDeclareByPath[childVDOMPath] = false
+      parentPathsByPath[childVDOMPath] = vdomPath
+    })
     return prevVDOMNode.childVDOMPaths
   }
 
   let childrenWithPaths, vdomNode
   if(typeof nextElement !== 'object') {
-    ({ vdomNode, childrenWithPaths } = primitiveNodeAndChildren(nextElement, vdomPath))
+    ({ vdomNode, childrenWithPaths } = primitiveNodeAndChildren(nextElement, vdomPath, vdomParentPath))
   } else if(typeof nextElement.component === 'string') {
-    ({ vdomNode, childrenWithPaths } = stringNodeAndChildren(nextElement, vdomPath))
+    ({ vdomNode, childrenWithPaths } = stringNodeAndChildren(nextElement, vdomPath, vdomParentPath))
   } else if (Array.prototype.isPrototypeOf(nextElement)) {
-    ({ vdomNode, childrenWithPaths } = arrayNodeAndChildren(nextElement, vdomPath))
+    ({ vdomNode, childrenWithPaths } = arrayNodeAndChildren(nextElement, vdomPath, vdomParentPath))
   } else if (typeof nextElement.component === 'object') {
-    ({ vdomNode, childrenWithPaths } = componentNodeAndChildren(nextElement, vdomPath, this))
+    ({ vdomNode, childrenWithPaths } = componentNodeAndChildren(nextElement, vdomPath, vdomParentPath, this))
   } else if (typeof nextElement.component === 'function') {
     // TODO: functional components
     throw new Error('Unimplemented pseudoElement type - functions are not yet supported')
@@ -127,14 +136,16 @@ TreeKeeperPrototype.shallowDeclareElement = function(vdomPath, elementsToDeclare
 
   const childVDOMPaths = []
 
-  childrenWithPaths.forEach(({ element, vdomPath }) => {
-    elementsToDeclareByPath[vdomPath] = element
-    childVDOMPaths.push(vdomPath)
+  childrenWithPaths.forEach(({ element: childElement, vdomPath: childVDOMPath }) => {
+    elementsToDeclareByPath[childVDOMPath] = childElement
+    parentPathsByPath[childVDOMPath] = vdomPath
+    childVDOMPaths.push(childVDOMPath)
   })
-  prevVDOMNode && prevVDOMNode.childVDOMPaths.forEach(vdomPath => {
-    if(!elementsToDeclareByPath[vdomPath]) {
-      elementsToDeclareByPath[vdomPath] = false
-      childVDOMPaths.push(vdomPath)
+  prevVDOMNode && prevVDOMNode.childVDOMPaths.forEach(childVDOMPath => {
+    if(!elementsToDeclareByPath[childVDOMPath]) {
+      elementsToDeclareByPath[childVDOMPath] = false
+      parentPathsByPath[childVDOMPath] = vdomPath
+      childVDOMPaths.push(childVDOMPath)
     }
   })
 
@@ -146,28 +157,24 @@ TreeKeeperPrototype.removeVDOMNode = function(vdomPath) {
   delete this.nextVDOMTree[vdomPath]
 }
 
-TreeKeeperPrototype.deepDeclareElement = function(element, vdomPath='root') {
+TreeKeeperPrototype.deepDeclareElement = function(element, vdomPath='root', vdomParentPath='') {
   const elementsToDeclareByPath = { [vdomPath]: element }
+  const parentPathsByPath = { [vdomPath]: vdomParentPath }
   const pathsToVisit = [vdomPath]
 
   while(pathsToVisit.length > 0) {
     const vdomPath = pathsToVisit.pop()
-    const childrenPaths = this.shallowDeclareElement(vdomPath, elementsToDeclareByPath)
+    const childrenPaths = this.shallowDeclareElement(vdomPath, elementsToDeclareByPath, parentPathsByPath)
     pathsToVisit.splice(pathsToVisit.length, 0, ...childrenPaths)
   }
 
   this.flushVDOMToDOM()
 }
 
-const getParentPath = (vdomPath) => {
-  // TODO: don't use the - character in paths
-  return vdomPath.split('-').slice(0,-1).join('-')
-}
-
 TreeKeeperPrototype.findRenderableParent = function(vdomTree, vdomPath) {
-  let renderableParentVDOMPath = getParentPath(vdomPath)
+  let renderableParentVDOMPath = vdomTree[vdomPath].vdomParentPath
   while(renderableParentVDOMPath !== '' && !vdomTree[renderableParentVDOMPath].isDirectlyRenderable) {
-    renderableParentVDOMPath = getParentPath(renderableParentVDOMPath)
+    renderableParentVDOMPath = vdomTree[renderableParentVDOMPath].vdomParentPath
   }
 
   return vdomTree[renderableParentVDOMPath]
