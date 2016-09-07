@@ -168,7 +168,7 @@ TreeKeeperPrototype.deepDeclareElement = function(element, vdomPath='root', vdom
     pathsToVisit.splice(pathsToVisit.length, 0, ...childrenPaths)
   }
 
-  this.flushVDOMToDOM()
+  this.flushVDOMToDOM(vdomPath)
 }
 
 TreeKeeperPrototype.findRenderableParent = function(vdomTree, vdomPath) {
@@ -250,8 +250,8 @@ TreeKeeperPrototype.flushVNodeToNode = function(vdomPath) {
   }
 }
 
-TreeKeeperPrototype.flushVDOMToDOM = function() {
-  let vdomPaths = ['root']
+TreeKeeperPrototype.flushVDOMToDOM = function(startingVDOMPath) {
+  let vdomPaths = [startingVDOMPath]
   while(vdomPaths.length > 0) {
     const vdomPath = vdomPaths.pop()
     const updatedVNode = this.flushVNodeToNode(vdomPath)
@@ -264,11 +264,11 @@ TreeKeeperPrototype.flushVDOMToDOM = function() {
     const nextChildVDOMPaths = this.nextVDOMTree[vdomPath]
       ? this.nextVDOMTree[vdomPath].childVDOMPaths : []
 
-    // TODO: improve the performance of the follwing
     const allVDomPaths = nextChildVDOMPaths.slice().reverse()
-    prevChildVDOMPaths.forEach(vdomPath => {
-      if(allVDomPaths.indexOf(vdomPath) === -1) {
-        allVDomPaths.push(vdomPath)
+    prevChildVDOMPaths.forEach(childVDOMPath => {
+      // WARNING: This asserts that the nextVDOMTree will NOT contain any orphaned nodes
+      if(this.nextVDOMTree[childVDOMPath] === undefined) {
+        allVDomPaths.push(childVDOMPath)
       }
     })
 
