@@ -99,10 +99,14 @@ const componentNodeAndChildren = (element, vdomPath, treeKeeper) => {
   return { childrenWithPaths, vdomNode }
 }
 
-TreeKeeperPrototype.shallowDeclareElement = function(prevVDOMNode, nextElement, vdomPath) {
+TreeKeeperPrototype.shallowDeclareElement = function(vdomPath, elementsToDeclareByPath) {
+  const nextElement = elementsToDeclareByPath[vdomPath]
+  const prevVDOMNode = this.prevVDOMTree[vdomPath]
+
   if(prevVDOMNode && !nextElement) {
     this.removeVDOMNode(vdomPath)
-    return prevVDOMNode.childVDOMPaths.map(vdomPath => ({ vdomPath, element: undefined }))
+    prevVDOMNode.childVDOMPaths.forEach(vdomPath => elementsToDeclareByPath[vdomPath] = false)
+    return prevVDOMNode.childVDOMPaths
   }
 
   let childrenWithPaths, vdomNode
@@ -121,17 +125,21 @@ TreeKeeperPrototype.shallowDeclareElement = function(prevVDOMNode, nextElement, 
     throw new Error('Unsupported pseudoElement - currently only primitives arrays and Reenact.createElement() produced objects are supported ')
   }
 
-  // TODO: improve the performance of the follwing
-  if(prevVDOMNode) {
-    prevVDOMNode.childVDOMPaths.forEach(vdomPath => {
-      if(childrenWithPaths.find(({ element, vdomPath: childVDOMPath}) => vdomPath === childVDOMPath) === undefined) {
-        childrenWithPaths.push({ vdomPath, element: undefined })
-      }
-    })
-  }
+  const childVDOMPaths = []
+
+  childrenWithPaths.forEach(({ element, vdomPath }) => {
+    elementsToDeclareByPath[vdomPath] = element
+    childVDOMPaths.push(vdomPath)
+  })
+  prevVDOMNode && prevVDOMNode.childVDOMPaths.forEach(vdomPath => {
+    if(!elementsToDeclareByPath[vdomPath]) {
+      elementsToDeclareByPath[vdomPath] = false
+      childVDOMPaths.push(vdomPath)
+    }
+  })
 
   this.nextVDOMTree[vdomPath] = vdomNode
-  return childrenWithPaths
+  return childVDOMPaths
 }
 
 TreeKeeperPrototype.removeVDOMNode = function(vdomPath) {
@@ -139,13 +147,13 @@ TreeKeeperPrototype.removeVDOMNode = function(vdomPath) {
 }
 
 TreeKeeperPrototype.deepDeclareElement = function(element, vdomPath='root') {
-  const elementsToDeclare = [{ element, vdomPath }]
+  const elementsToDeclareByPath = { [vdomPath]: element }
+  const pathsToVisit = [vdomPath]
 
-  while(elementsToDeclare.length > 0) {
-    const { element: nextElement, vdomPath } = elementsToDeclare.pop()
-    const prevVDOMNode = this.prevVDOMTree[vdomPath]
-    const childrenWithPaths = this.shallowDeclareElement(prevVDOMNode, nextElement, vdomPath)
-    elementsToDeclare.splice(elementsToDeclare.length, 0, ...childrenWithPaths)
+  while(pathsToVisit.length > 0) {
+    const vdomPath = pathsToVisit.pop()
+    const childrenPaths = this.shallowDeclareElement(vdomPath, elementsToDeclareByPath)
+    pathsToVisit.splice(pathsToVisit.length, 0, ...childrenPaths)
   }
 
   this.flushVDOMToDOM()
