@@ -4,13 +4,30 @@ import { ReenactDOM, Reenact } from '../src/index'
 
 const ListItem = Reenact.createClass({
   render() {
-    return <div>Hey, I am an element {this.props.key}</div>
+    return <div
+      style={{
+        display: 'block',
+        fontSize: '16pt',
+        position: 'relative',
+        left: (Math.random() * 10) + 'px',
+      }}
+      className='someclass someotherclass'
+    >
+      Hey, I am an element {this.props.key}
+    </div>
   }
 })
 
 const Component = Reenact.createClass({
   getInitialState() {
-    setInterval(() => this.setState({ list: this.state.list.slice(1).concat([this.state.next]), next: this.state.next+1 }),1000)
+    setInterval(() => {
+        this.setState({
+          list: this.state.list.slice(1).concat([this.state.next]),
+          next: this.state.next+1
+        })
+      },
+      1000
+    )
     return { list: [1,2,3], next: 4 }
   },
 

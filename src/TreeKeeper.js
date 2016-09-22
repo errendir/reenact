@@ -18,10 +18,11 @@ const primitiveNodeAndChildren = (element, vdomPath, vdomParentPath) => {
     vdomParentPath,
     isTextNode: true,
     tag: element,   // TODO: don't reuse this field for text
-    instance: null,
+    props: undefined,
+    instance: undefined,
     element: element,
     isDirectlyRenderable: true,
-    renderedNode: null,
+    renderedNode: undefined,
     childVDOMPaths: [],
   }
   return { childrenWithPaths, vdomNode }
@@ -35,10 +36,11 @@ const stringNodeAndChildren = (element, vdomPath, vdomParentPath) => {
     vdomParentPath,
     isTextNode: false,
     tag: element.component,
-    instance: null,
+    props: element.props,
+    instance: undefined,
     element: element,
     isDirectlyRenderable: true,
-    renderedNode: null,
+    renderedNode: undefined,
     childVDOMPaths: childrenWithPaths.map(({ vdomPath }) => vdomPath),
   }
   return { childrenWithPaths, vdomNode }
@@ -51,11 +53,12 @@ const arrayNodeAndChildren = (element, vdomPath, vdomParentPath) => {
     vdomPath,
     vdomParentPath,
     isTextNode: false,
-    tag: null,
-    instance: null,
+    tag: undefined,
+    props: undefined,
+    instance: undefined,
     element: element,
     isDirectlyRenderable: false,
-    renderedNode: null,
+    renderedNode: undefined,
     childVDOMPaths: childrenWithPaths.map(({ vdomPath }) => vdomPath)
   }
   return { childrenWithPaths, vdomNode }
@@ -94,10 +97,11 @@ const componentNodeAndChildren = (element, vdomPath, vdomParentPath, treeKeeper)
     vdomParentPath,
     isTextNode: false,
     tag: element.component,
+    props: element.props,
     instance: instance,
     element: element,
     isDirectlyRenderable: false,
-    renderedNode: null,
+    renderedNode: undefined,
     childVDOMPaths: childrenWithPaths.map(({ vdomPath }) => vdomPath),
   }
 
@@ -168,6 +172,7 @@ TreeKeeperPrototype.deepDeclareElement = function(element, vdomPath='root', vdom
     pathsToVisit.splice(pathsToVisit.length, 0, ...childrenPaths)
   }
 
+  // TODO: Don't flush the entire tree - stop on shouldComponentUpdating components
   this.flushVDOMToDOM(vdomPath)
 }
 
@@ -180,11 +185,52 @@ TreeKeeperPrototype.findRenderableParent = function(vdomTree, vdomPath) {
   return vdomTree[renderableParentVDOMPath]
 }
 
+const emptyObject = {}
+
+const assignPropsToElement = function(oldProps, newProps, node) {
+  oldProps = oldProps || emptyObject
+  newProps = newProps || emptyObject
+  Object.keys(newProps).forEach(attributeName => {
+    if(attributeName === 'style' || attributeName === 'key' || attributeName === 'ref') return
+    const newAttributeValue = newProps[attributeName]
+    const oldAttributeValue = oldProps[attributeName]
+    if(newAttributeValue !== oldAttributeValue) {
+      node.setAttribute(attributeName, newAttributeValue)
+    }
+  })
+  Object.keys(oldProps).forEach(attributeName => {
+    if(attributeName === 'style' || attributeName === 'key' || attributeName === 'ref') return
+    if(newProps[attributeName] !== undefined) return
+    node.removeAttribute(attributeName)
+  })
+
+  const newStyle = newProps['style'] || emptyObject
+  const oldStyle = oldProps['style'] || emptyObject
+  Object.keys(newStyle).forEach(styleName => {
+    const newStyleValue = newStyle[styleName]
+    const oldStyleValue = oldStyle[styleName]
+    if(newStyleValue !== oldStyleValue) {
+      node.style[styleName] = newStyleValue
+    }
+  })
+  Object.keys(oldStyle).forEach(styleName => {
+    if(newStyle[styleName] !== undefined) return
+    const oldStyleValue = oldStyle[styleName]
+    if(newStyleValue !== oldStyleValue) {
+      node.style.removeProperty(styleName)
+    }
+  })
+}
+
 TreeKeeperPrototype.flushVNodeToNode = function(vdomPath) {
   const nextVDOMNode = this.nextVDOMTree[vdomPath]
   const prevVDOMNode = this.prevVDOMTree[vdomPath]
 
-  if(prevVDOMNode && prevVDOMNode.isDirectlyRenderable && !nextVDOMNode) {
+  const isPreviousNodeDirectlyRenderable =
+    prevVDOMNode && prevVDOMNode.isDirectlyRenderable
+  const isNextNodeDirectlyRenderable =
+    nextVDOMNode && nextVDOMNode.isDirectlyRenderable
+  if(isPreviousNodeDirectlyRenderable && !isNextNodeDirectlyRenderable) {
     const renderableParentVDOM = this.findRenderableParent(this.prevVDOMTree, vdomPath)
     const parentRenderedNode = renderableParentVDOM.renderedNode || this.rootDOMNode
     parentRenderedNode.removeChild(prevVDOMNode.renderedNode)
@@ -195,17 +241,16 @@ TreeKeeperPrototype.flushVNodeToNode = function(vdomPath) {
   // TODO: There is an issue with renderable nodes changed to non-renderable not being removed
   if(!nextVDOMNode.isDirectlyRenderable) return nextVDOMNode
 
-  const renderableParentVDOM = this.findRenderableParent(this.nextVDOMTree, vdomPath)
+  const renderableParentVDOM =
+    this.findRenderableParent(this.nextVDOMTree, vdomPath)
 
-  let parentRenderedNode = null
+  let parentRenderedNode = undefined
   if(renderableParentVDOM && !renderableParentVDOM.renderedNode) {
     throw new Error('VDOM changes should be flushed in the BFS order - a node is missing')
   } else if(renderableParentVDOM) {
     parentRenderedNode = renderableParentVDOM.renderedNode
-  } else if(renderableParentVDOM === undefined) {
-    parentRenderedNode = this.rootDOMNode
   } else {
-    throw new Error('No DOM node was rendered for ' + renderableParentVDOMPath)
+    parentRenderedNode = this.rootDOMNode
   }
 
   let oldRenderedNode
@@ -213,6 +258,7 @@ TreeKeeperPrototype.flushVNodeToNode = function(vdomPath) {
   let replaceNode = false
   if(prevVDOMNode !== undefined) {
     oldRenderedNode = prevVDOMNode.renderedNode
+    newRenderedNode = prevVDOMNode.renderedNode
     if(nextVDOMNode.isTextNode) {
       replaceNode = false
       oldRenderedNode.textContent = nextVDOMNode.tag
@@ -220,9 +266,11 @@ TreeKeeperPrototype.flushVNodeToNode = function(vdomPath) {
       const canPrevRenderedNodeBeReused = prevVDOMNode.tag === nextVDOMNode.tag
       if(canPrevRenderedNodeBeReused) {
         replaceNode = false
+        assignPropsToElement(prevVDOMNode.props, nextVDOMNode.props, newRenderedNode)
       } else {
         replaceNode = true
         newRenderedNode = document.createElement(nextVDOMNode.tag)
+        assignPropsToElement(undefined, nextVDOMNode.props, newRenderedNode)
       }
     }
   } else {
@@ -231,14 +279,12 @@ TreeKeeperPrototype.flushVNodeToNode = function(vdomPath) {
       newRenderedNode = document.createTextNode(nextVDOMNode.tag)
     } else {
       newRenderedNode = document.createElement(nextVDOMNode.tag)
+      assignPropsToElement(undefined, nextVDOMNode.props, newRenderedNode)
     }
   }
 
-  if(replaceNode) {
+  if(oldRenderedNode && oldRenderedNode !== newRenderedNode) {
     parentRenderedNode.replaceChild(newRenderedNode, oldRenderedNode)
-  } else if(oldRenderedNode && newRenderedNode) {
-    parentRenderedNode.removeChild(oldRenderedNode)
-    parentRenderedNode.appendChild(newRenderedNode)
   } else if(newRenderedNode) {
     parentRenderedNode.appendChild(newRenderedNode)
   }
