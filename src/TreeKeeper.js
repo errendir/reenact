@@ -120,10 +120,15 @@ const componentNodeAndChildren = (element, vdomPath, vdomParentPath, treeKeeper)
     childVDOMPaths: [vdomPath + '-representative'],
   }
 
-  return { childrenWithPaths, vdomNode }
+  return { childrenWithPaths, vdomNode, updateChildren: shouldRender }
 }
 
-TreeKeeperPrototype.shallowDeclareElement = function(vdomPath, elementsToDeclareByPath, parentPathsByPath) {
+TreeKeeperPrototype.shallowDeclareElement = function(
+  vdomPath,
+  elementsToDeclareByPath,
+  parentPathsByPath,
+  pathsToVisit
+) {
   const vdomParentPath = parentPathsByPath[vdomPath]
   const nextElement = elementsToDeclareByPath[vdomPath]
   const prevVDOMNode = this.prevVDOMTree[vdomPath]
@@ -134,10 +139,12 @@ TreeKeeperPrototype.shallowDeclareElement = function(vdomPath, elementsToDeclare
       elementsToDeclareByPath[childVDOMPath] = false
       parentPathsByPath[childVDOMPath] = vdomPath
     })
-    return prevVDOMNode.childVDOMPaths
+    Array.prototype.push.apply(pathsToVisit, prevVDOMNode.childVDOMPaths)
+    return
   }
 
   let childrenWithPaths, vdomNode
+  let updateChildren = true
   if(typeof nextElement !== 'object') {
     ({ vdomNode, childrenWithPaths } = primitiveNodeAndChildren(nextElement, vdomPath, vdomParentPath))
   } else if(typeof nextElement.component === 'string') {
@@ -145,7 +152,7 @@ TreeKeeperPrototype.shallowDeclareElement = function(vdomPath, elementsToDeclare
   } else if (Array.prototype.isPrototypeOf(nextElement)) {
     ({ vdomNode, childrenWithPaths } = arrayNodeAndChildren(nextElement, vdomPath, vdomParentPath))
   } else if (typeof nextElement.component === 'object') {
-    ({ vdomNode, childrenWithPaths } = componentNodeAndChildren(nextElement, vdomPath, vdomParentPath, this))
+    ({ vdomNode, childrenWithPaths, updateChildren } = componentNodeAndChildren(nextElement, vdomPath, vdomParentPath, this))
   } else if (typeof nextElement.component === 'function') {
     // TODO: functional components
     throw new Error('Unimplemented pseudoElement type - functions are not yet supported')
@@ -153,42 +160,75 @@ TreeKeeperPrototype.shallowDeclareElement = function(vdomPath, elementsToDeclare
     throw new Error('Unsupported pseudoElement - currently only primitives arrays and Reenact.createElement() produced objects are supported ')
   }
 
-  const childVDOMPaths = []
-
-  childrenWithPaths.forEach(({ element: childElement, vdomPath: childVDOMPath }) => {
-    elementsToDeclareByPath[childVDOMPath] = childElement
-    parentPathsByPath[childVDOMPath] = vdomPath
-    childVDOMPaths.push(childVDOMPath)
-  })
-  prevVDOMNode && prevVDOMNode.childVDOMPaths.forEach(childVDOMPath => {
-    if(!elementsToDeclareByPath[childVDOMPath]) {
-      elementsToDeclareByPath[childVDOMPath] = false
+  if(updateChildren) {
+    for(let i=childrenWithPaths.length-1; i>=0; --i) {
+      const { element: childElement, vdomPath: childVDOMPath } = childrenWithPaths[i]
+      elementsToDeclareByPath[childVDOMPath] = childElement
       parentPathsByPath[childVDOMPath] = vdomPath
-      childVDOMPaths.push(childVDOMPath)
+      pathsToVisit.push(childVDOMPath)
     }
-  })
+    prevVDOMNode && prevVDOMNode.childVDOMPaths.forEach(childVDOMPath => {
+      if(!elementsToDeclareByPath[childVDOMPath]) {
+        elementsToDeclareByPath[childVDOMPath] = undefined
+        parentPathsByPath[childVDOMPath] = vdomPath
+        pathsToVisit.push(childVDOMPath)
+      }
+    })
+  }
 
   this.nextVDOMTree[vdomPath] = vdomNode
-  return childVDOMPaths
+  this.flushVNodeToDOMNode(vdomPath)
+}
+
+TreeKeeperPrototype.shallowFinishElement = function(vdomPath) {
+  const prevVDOMNode = this.prevVDOMTree[vdomPath]
+  const nextVDOMNode = this.prevVDOMTree[vdomPath]
+
+  const prevInstance = prevVDOMNode ? prevVDOMNode.instance : undefined
+  const nextInstance = nextVDOMNode ? nextVDOMNode.instance : undefined
+
+  // TODO: make sure that the refs are correctly set
+  if(prevVDOMNode && prevInstance && nextVDOMNode && nextInstance) {
+    nextInstance.componentDidUpdate && nextInstance.componentDidUpdate()
+  } else if(nextVDOMNode && nextInstance) {
+    nextInstance.componentDidMount && nextInstance.componentDidMount()
+  }
 }
 
 TreeKeeperPrototype.removeVDOMNode = function(vdomPath) {
+  const vdomNode = this.prevVDOMTree[vdomPath]
+  if(vdomNode.instance && vdomNode.instance.componentWillUnmount) {
+    vdomNode.instance.componentWillUnmount()
+  }
   delete this.nextVDOMTree[vdomPath]
+  this.flushVNodeToDOMNode(vdomPath)
 }
 
 TreeKeeperPrototype.deepDeclareElement = function(element, vdomPath='root', vdomParentPath='') {
   const elementsToDeclareByPath = { [vdomPath]: element }
+  const elementsWaitingForMountByPath = { }
   const parentPathsByPath = { [vdomPath]: vdomParentPath }
   const pathsToVisit = [vdomPath]
 
   while(pathsToVisit.length > 0) {
-    const vdomPath = pathsToVisit.pop()
-    const childrenPaths = this.shallowDeclareElement(vdomPath, elementsToDeclareByPath, parentPathsByPath)
-    pathsToVisit.splice(pathsToVisit.length, 0, ...childrenPaths)
+    const vdomPath = pathsToVisit[pathsToVisit.length-1]
+    if(elementsWaitingForMountByPath[vdomPath] === true) {
+      this.shallowFinishElement(
+        vdomPath,
+      )
+      pathsToVisit.pop()
+    } else {
+      this.shallowDeclareElement(
+        vdomPath,
+        elementsToDeclareByPath,
+        parentPathsByPath,
+        pathsToVisit,
+      )
+      elementsWaitingForMountByPath[vdomPath] = true
+    }
   }
-
-  // TODO: Don't flush the entire tree - stop on shouldComponentUpdating components
-  this.flushVDOMToDOM(vdomPath)
+  this.prevVDOMTree = this.nextVDOMTree
+  this.nextVDOMTree = Object.assign({}, this.prevVDOMTree)
 }
 
 TreeKeeperPrototype.findRenderableParent = function(vdomTree, vdomPath) {
@@ -237,7 +277,7 @@ const assignPropsToElement = function(oldProps, newProps, node) {
   })
 }
 
-TreeKeeperPrototype.flushVNodeToNode = function(vdomPath) {
+TreeKeeperPrototype.flushVNodeToDOMNode = function(vdomPath) {
   const nextVDOMNode = this.nextVDOMTree[vdomPath]
   const prevVDOMNode = this.prevVDOMTree[vdomPath]
 
@@ -251,17 +291,21 @@ TreeKeeperPrototype.flushVNodeToNode = function(vdomPath) {
     parentRenderedNode.removeChild(prevVDOMNode.renderedNode)
   }
 
-  if(prevVDOMNode && !nextVDOMNode) return nextVDOMNode
+  if(prevVDOMNode && !nextVDOMNode) {
+    return nextVDOMNode
+  }
 
-  // TODO: There is an issue with renderable nodes changed to non-renderable not being removed
-  if(!nextVDOMNode.isDirectlyRenderable) return nextVDOMNode
+  // TODO: Test renderable nodes changed to non-renderable
+  if(!nextVDOMNode.isDirectlyRenderable) {
+    return nextVDOMNode
+  }
 
   const renderableParentVDOM =
     this.findRenderableParent(this.nextVDOMTree, vdomPath)
 
   let parentRenderedNode = undefined
   if(renderableParentVDOM && !renderableParentVDOM.renderedNode) {
-    throw new Error('VDOM changes should be flushed in the BFS order - a node is missing')
+    throw new Error('VDOM changes should be flushed in the DFS order - a node is missing')
   } else if(renderableParentVDOM) {
     parentRenderedNode = renderableParentVDOM.renderedNode
   } else {
@@ -271,9 +315,8 @@ TreeKeeperPrototype.flushVNodeToNode = function(vdomPath) {
   let oldRenderedNode
   let newRenderedNode
   let replaceNode = false
-  if(prevVDOMNode !== undefined) {
-    oldRenderedNode = prevVDOMNode.renderedNode
-    newRenderedNode = prevVDOMNode.renderedNode
+  if(isPreviousNodeDirectlyRenderable && prevVDOMNode !== undefined) {
+    newRenderedNode = oldRenderedNode = prevVDOMNode.renderedNode
     if(nextVDOMNode.isTextNode) {
       replaceNode = false
       oldRenderedNode.textContent = nextVDOMNode.tag
@@ -300,42 +343,20 @@ TreeKeeperPrototype.flushVNodeToNode = function(vdomPath) {
 
   if(oldRenderedNode && oldRenderedNode !== newRenderedNode) {
     parentRenderedNode.replaceChild(newRenderedNode, oldRenderedNode)
-  } else if(newRenderedNode) {
+  } else if(newRenderedNode && oldRenderedNode !== newRenderedNode) {
     parentRenderedNode.appendChild(newRenderedNode)
   }
 
   if(newRenderedNode !== undefined) {
-    return { ...nextVDOMNode, renderedNode: newRenderedNode }
-  } else {
-    return { ...nextVDOMNode, renderedNode: oldRenderedNode }
-  }
-}
-
-TreeKeeperPrototype.flushVDOMToDOM = function(startingVDOMPath) {
-  let vdomPaths = [startingVDOMPath]
-  while(vdomPaths.length > 0) {
-    const vdomPath = vdomPaths.pop()
-    const updatedVNode = this.flushVNodeToNode(vdomPath)
-    if(this.nextVDOMTree[vdomPath]) {
-      this.nextVDOMTree[vdomPath] = updatedVNode
+    this.nextVDOMTree[vdomPath] = {
+      ...nextVDOMNode,
+      renderedNode: newRenderedNode
     }
-
-    const prevChildVDOMPaths = this.prevVDOMTree[vdomPath]
-      ? this.prevVDOMTree[vdomPath].childVDOMPaths : []
-    const nextChildVDOMPaths = this.nextVDOMTree[vdomPath]
-      ? this.nextVDOMTree[vdomPath].childVDOMPaths : []
-
-    const allVDomPaths = nextChildVDOMPaths.slice().reverse()
-    prevChildVDOMPaths.forEach(childVDOMPath => {
-      // WARNING: This asserts that the nextVDOMTree will NOT contain any orphaned nodes
-      if(this.nextVDOMTree[childVDOMPath] === undefined) {
-        allVDomPaths.push(childVDOMPath)
-      }
-    })
-
-    vdomPaths.unshift(...allVDomPaths)
+  } else {
+    this.nextVDOMTree[vdomPath] = {
+      ...nextVDOMNode,
+      renderedNode: oldRenderedNode
+    }
   }
-
-  this.prevVDOMTree = this.nextVDOMTree
-  this.nextVDOMTree = Object.assign({}, this.prevVDOMTree)
+  return this.nextVDOMTree[vdomPath]
 }

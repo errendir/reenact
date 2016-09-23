@@ -2,6 +2,24 @@ console.log('Hello world')
 
 import { ReenactDOM, Reenact } from '../src/index'
 
+const Hello = Reenact.createClass({
+  render() {
+    console.log('rerendering hello', this.props.whoShouldIWelcome)
+    return <span>
+      Hello {this.props.whoShouldIWelcome}!
+    </span>
+  }
+})
+
+const Span = Reenact.createClass({
+  render() {
+    console.log('rerendering span with', this.props.value)
+    return <span>
+      {this.props.value}
+    </span>
+  }
+})
+
 const ListItem = Reenact.createClass({
   render() {
     console.log('rerendering', this.props.key)
@@ -14,7 +32,7 @@ const ListItem = Reenact.createClass({
       }}
       className='someclass someotherclass'
     >
-      Hey, I am an element {this.props.key}
+      Hey, I am an element <Span value={this.props.key} />
     </div>
   },
 
@@ -38,7 +56,7 @@ const Component = Reenact.createClass({
 
   render() {
     return <div>
-      Hello {this.props.whoShouldIWelcome}!
+      <Hello whoShouldIWelcome={this.props.whoShouldIWelcome} />
       {this.state.list.map((key) => <ListItem key={key} />)}
     </div>
   }
