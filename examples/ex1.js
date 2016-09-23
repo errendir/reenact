@@ -4,6 +4,7 @@ import { ReenactDOM, Reenact } from '../src/index'
 
 const ListItem = Reenact.createClass({
   render() {
+    console.log('rerendering', this.props.key)
     return <div
       style={{
         display: 'block',
@@ -15,6 +16,10 @@ const ListItem = Reenact.createClass({
     >
       Hey, I am an element {this.props.key}
     </div>
+  },
+
+  shouldComponentUpdate(nextProps) {
+    return this.props !== nextProps
   }
 })
 

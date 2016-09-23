@@ -66,9 +66,14 @@ const arrayNodeAndChildren = (element, vdomPath, vdomParentPath) => {
 
 const componentNodeAndChildren = (element, vdomPath, vdomParentPath, treeKeeper) => {
   let instance = treeKeeper.prevVDOMTree[vdomPath]
-      ? treeKeeper.prevVDOMTree[vdomPath].instance : undefined
+      ? treeKeeper.prevVDOMTree[vdomPath].instance
+      : undefined
 
-  if(instance) {
+  const isInstanceFresh = instance === undefined
+  if(!isInstanceFresh) {
+    if(instance.componentWillReceiveProps !== undefined) {
+      instance.componentWillReceiveProps(element.props)
+    }
     instance.props = element.props
     instance.children = element.children
   } else {
@@ -90,8 +95,18 @@ const componentNodeAndChildren = (element, vdomPath, vdomParentPath, treeKeeper)
     // TODO: bind the methods
   }
 
-  const childrenWithPaths =
-    [{ element: instance.render(), vdomPath: vdomPath + '-representative' }]
+  const shouldRender = isInstanceFresh ||
+    (instance.shouldComponentUpdate === undefined) ||
+    instance.shouldComponentUpdate(element.props)
+
+  const representativeElementTree = shouldRender
+    ? instance.render()
+    : treeKeeper.prevVDOMTree[vdomPath + '-representative'].element
+
+  const childrenWithPaths = [{
+    element: representativeElementTree,
+    vdomPath: vdomPath + '-representative'
+  }]
   const vdomNode = {
     vdomPath,
     vdomParentPath,
@@ -102,7 +117,7 @@ const componentNodeAndChildren = (element, vdomPath, vdomParentPath, treeKeeper)
     element: element,
     isDirectlyRenderable: false,
     renderedNode: undefined,
-    childVDOMPaths: childrenWithPaths.map(({ vdomPath }) => vdomPath),
+    childVDOMPaths: [vdomPath + '-representative'],
   }
 
   return { childrenWithPaths, vdomNode }
