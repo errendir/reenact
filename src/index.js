@@ -9,7 +9,11 @@ ComponentPrototype.setState = function(newState) {
   if(this.state === null) throw new Error('Component keeps track of no state')
   // TODO: don't immediately set state and rerender - wait for events to be done like React does
   this.state = Object.assign(this.state, newState)
-  this.__treeKeeper.deepDeclareElement(this.__element, this.__vdomPath, this.__vdomParentPath)
+  this.__treeKeeper.deepDeclareElement(
+    this.__element,
+    this.__vdomPath,
+    this.__vdomParentPath
+  )
 }
 
 Reenact.createClass = (prototype) => {

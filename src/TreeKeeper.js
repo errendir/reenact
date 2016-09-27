@@ -1,3 +1,5 @@
+import { assignPropsToElement } from './DOMElement'
+
 export const CreateTreeKeeper = (rootDOMNode) => {
   return Object.assign(
     Object.create(TreeKeeperPrototype),
@@ -247,43 +249,6 @@ TreeKeeperPrototype.findRenderableParent = function(vdomTree, vdomPath) {
   return vdomTree[renderableParentVDOMPath]
 }
 
-const emptyObject = {}
-
-const assignPropsToElement = function(oldProps, newProps, node) {
-  oldProps = oldProps || emptyObject
-  newProps = newProps || emptyObject
-  Object.keys(newProps).forEach(attributeName => {
-    if(attributeName === 'style' || attributeName === 'key' || attributeName === 'ref') return
-    const newAttributeValue = newProps[attributeName]
-    const oldAttributeValue = oldProps[attributeName]
-    if(newAttributeValue !== oldAttributeValue) {
-      node.setAttribute(attributeName, newAttributeValue)
-    }
-  })
-  Object.keys(oldProps).forEach(attributeName => {
-    if(attributeName === 'style' || attributeName === 'key' || attributeName === 'ref') return
-    if(newProps[attributeName] !== undefined) return
-    node.removeAttribute(attributeName)
-  })
-
-  const newStyle = newProps['style'] || emptyObject
-  const oldStyle = oldProps['style'] || emptyObject
-  Object.keys(newStyle).forEach(styleName => {
-    const newStyleValue = newStyle[styleName]
-    const oldStyleValue = oldStyle[styleName]
-    if(newStyleValue !== oldStyleValue) {
-      node.style[styleName] = newStyleValue
-    }
-  })
-  Object.keys(oldStyle).forEach(styleName => {
-    if(newStyle[styleName] !== undefined) return
-    const oldStyleValue = oldStyle[styleName]
-    if(newStyleValue !== oldStyleValue) {
-      node.style.removeProperty(styleName)
-    }
-  })
-}
-
 TreeKeeperPrototype.flushVNodeToDOMNode = function(vdomPath) {
   const nextVDOMNode = this.nextVDOMTree[vdomPath]
   const prevVDOMNode = this.prevVDOMTree[vdomPath]
@@ -331,11 +296,11 @@ TreeKeeperPrototype.flushVNodeToDOMNode = function(vdomPath) {
       const canPrevRenderedNodeBeReused = prevVDOMNode.tag === nextVDOMNode.tag
       if(canPrevRenderedNodeBeReused) {
         replaceNode = false
-        assignPropsToElement(prevVDOMNode.props, nextVDOMNode.props, newRenderedNode)
+        assignPropsToElement(prevVDOMNode.props, nextVDOMNode.props, nextVDOMNode.element, newRenderedNode)
       } else {
         replaceNode = true
         newRenderedNode = document.createElement(nextVDOMNode.tag)
-        assignPropsToElement(undefined, nextVDOMNode.props, newRenderedNode)
+        assignPropsToElement(undefined, nextVDOMNode.props, nextVDOMNode.element, newRenderedNode)
       }
     }
   } else {
@@ -344,7 +309,7 @@ TreeKeeperPrototype.flushVNodeToDOMNode = function(vdomPath) {
       newRenderedNode = document.createTextNode(nextVDOMNode.tag)
     } else {
       newRenderedNode = document.createElement(nextVDOMNode.tag)
-      assignPropsToElement(undefined, nextVDOMNode.props, newRenderedNode)
+      assignPropsToElement(undefined, nextVDOMNode.props, nextVDOMNode.element, newRenderedNode)
     }
   }
 

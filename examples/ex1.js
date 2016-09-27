@@ -37,6 +37,7 @@ const ListItem = Reenact.createClass({
   },
 
   shouldComponentUpdate(nextProps) {
+    // Look at this depth zero comparison :)
     return this.props !== nextProps
   }
 })
@@ -64,6 +65,7 @@ const Component = Reenact.createClass({
   render() {
     return <div>
       <Hello whoShouldIWelcome={this.props.whoShouldIWelcome} />
+      <button onClick={() => console.log('click')}>I am a button</button>
       {this.state.list.map((key) => <ListItem key={key} />)}
     </div>
   }
