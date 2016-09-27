@@ -64,6 +64,15 @@ const arrayNodeAndChildren = (element, vdomPath, vdomParentPath) => {
   return { childrenWithPaths, vdomNode }
 }
 
+// TODO: experiment with Proxies
+const bindAndAssign = (object, prototype) => {
+  Object.keys(prototype).forEach(prop => {
+    if(typeof prototype[prop] === 'function') {
+      object[prop] = prototype[prop].bind(object)
+    }
+  })
+}
+
 const componentNodeAndChildren = (element, vdomPath, vdomParentPath, treeKeeper) => {
   let instance = treeKeeper.prevVDOMTree[vdomPath]
       ? treeKeeper.prevVDOMTree[vdomPath].instance
@@ -77,6 +86,7 @@ const componentNodeAndChildren = (element, vdomPath, vdomParentPath, treeKeeper)
     instance.props = element.props
     instance.children = element.children
   } else {
+    // TODO: don't create this intermediary object
     instance = Object.assign(
       Object.create(element.component),
       {
@@ -88,6 +98,7 @@ const componentNodeAndChildren = (element, vdomPath, vdomParentPath, treeKeeper)
         __element: element,
       }
     )
+    bindAndAssign(instance, element.component)
     if(instance.getInitialState) {
       const state = instance.getInitialState(element.props)
       instance.state = state
@@ -182,7 +193,7 @@ TreeKeeperPrototype.shallowDeclareElement = function(
 
 TreeKeeperPrototype.shallowFinishElement = function(vdomPath) {
   const prevVDOMNode = this.prevVDOMTree[vdomPath]
-  const nextVDOMNode = this.prevVDOMTree[vdomPath]
+  const nextVDOMNode = this.nextVDOMTree[vdomPath]
 
   const prevInstance = prevVDOMNode ? prevVDOMNode.instance : undefined
   const nextInstance = nextVDOMNode ? nextVDOMNode.instance : undefined

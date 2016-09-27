@@ -43,15 +43,22 @@ const ListItem = Reenact.createClass({
 
 const Component = Reenact.createClass({
   getInitialState() {
-    setInterval(() => {
-        this.setState({
-          list: this.state.list.slice(1).concat([this.state.next]),
-          next: this.state.next+1
-        })
-      },
-      1000
-    )
     return { list: [1,2,3], next: 4 }
+  },
+
+  componentDidMount() {
+    this.intervalId = setInterval(this.advanceTheList,1000)
+  },
+
+  componentWillUnmount() {
+    clearInterval(this.intervalId)
+  },
+
+  advanceTheList() {
+    this.setState({
+      list: this.state.list.slice(1).concat([this.state.next]),
+      next: this.state.next+1
+    })
   },
 
   render() {
