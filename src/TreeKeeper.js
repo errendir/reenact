@@ -86,19 +86,15 @@ const componentNodeAndChildren = (element, vdomPath, vdomParentPath, treeKeeper)
     instance.props = element.props
     instance.children = element.children
   } else {
-    // TODO: don't create this intermediary object
-    instance = Object.assign(
-      Object.create(element.component),
-      {
-        props: element.props,
-        children: element.children,
-        __treeKeeper: treeKeeper,
-        __vdomPath: vdomPath,
-        __vdomParentPath: vdomParentPath,
-        __element: element,
-      }
-    )
+    instance = Object.create(element.component)
     bindAndAssign(instance, element.component)
+    instance.props = element.props
+    instance.children = element.children
+    instance.__treeKeeper = treeKeeper
+    instance.__vdomPath = vdomPath
+    instance.__vdomParentPath = vdomParentPath
+    instance.__element = element
+
     if(instance.getInitialState) {
       const state = instance.getInitialState(element.props)
       instance.state = state
